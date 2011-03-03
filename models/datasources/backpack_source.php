@@ -293,7 +293,7 @@ public function describe($model) {
 		
 		//###TODO: Honor "recursive" setting and build out associations. 37s does most of the hard work and usually returns everything together.
 		
-		return array($results);
+		return $results;
 	}
 
 /**
