@@ -461,7 +461,7 @@ public function describe(&$model) {
 /**
  * Returns the available Backpack "tables"
  *
- * @return array List of backpack tables
+ * @return array List of backpack "tables" exposed by the 37s API.
  * @access public
  */
 	public function listSources() {
@@ -475,12 +475,58 @@ public function describe(&$model) {
 
 
 /**
+ * Convert the XML-style Page array into a Cake-style array so scaffolding, etc. work more automatically.
+ *
+ * @param int $raw_xml_array An array converted from the raw XML the 37s API returns representing a single Page.
+ * @return array Reformatted array that follows Cake model naming and nesting conventions.
+ * @access protected
+ */
+	protected function reformat($raw_xml_array) {
+		
+		$types = array(
+			'Belongings' =>'Belonging',
+			'Notes' =>'Note',
+			'Separators' =>'Separator',
+			'Emails' =>'Email',
+			'Lists' =>'List',
+			'Items' =>'Item',
+		);
+		
+		foreach($types as $plural => $singular) {
+		
+			if(isset($raw_xml_array[$plural][$singular]) || isset($raw_xml_array[$plural][strtolower($singular)])) {
+				
+				if(isset($raw_xml_array[$plural][$singular]['id'])) {  // Single item returned
+					$raw_xml_array[$singular] = array($raw_xml_array[$plural][$singular]);  // Make sure we can still loop over it.
+				}
+				elseif(isset($raw_xml_array[$plural][strtolower($singular)]['id'])) {  // Single item returned, but somehow not slugged correctly.
+					$raw_xml_array[ucfirst($singular)] = array($raw_xml_array[$plural][strtolower($singular)]);
+				}
+				else {
+					$raw_xml_array[$singular] = $raw_xml_array[$plural][$singular];
+				}
+				
+				unset($raw_xml_array[$plural]);  // Remove the old plural key.
+			}
+		}
+		
+		// Handle the nested List Items.
+		if(isset($raw_xml_array['List'])) {
+			foreach($raw_xml_array['List'] as $index => $list) {
+				$raw_xml_array['List'][$index] = array_shift($this->reformat($list));
+			}
+		}
+		
+		return array($this->model->alias => $raw_xml_array);
+	}
+
+/**
  * Fetch a list of page records.
  *
  * @return mixed Array of Page records on success, false on HTTP request failure or 37s API failure.
  * @access protected
  */
-	protected function pages_list_all() {
+	protected function page_list_all() {
 		
 		$request_overrides = array(
 				'uri' => array(
@@ -497,7 +543,7 @@ public function describe(&$model) {
 		$results = array();
 		foreach($result['Response']['Pages']['Page'] as $index => $r)
 		{
-			$results[] = array($this->model->alias => $r);
+			$results[] = $this->reformat($r);
 		}
 		
 		return $results;
@@ -510,13 +556,13 @@ public function describe(&$model) {
  * @return mixed Array of Page records on success, false on HTTP request failure or 37s API failure.
  * @access protected
  */
-	protected function pages_search($term) {
+	protected function page_search($term) {
 		
 		$request_overrides = array(
 				'uri' => array(
 					'path' => "/ws/pages/search",
 				),
-				'body' => (string)$this->requestBody(array('term' => htmlentities($term))),
+				'body' => $this->requestBody(array('term' => htmlentities($term))),
 			);
 	
 		// Fire the http request.
@@ -542,13 +588,13 @@ public function describe(&$model) {
  * @return mixed Array containing the new page, including ID if the page was created, false on failure.
  * @access protected
  */
-	protected function pages_create($title, $description = null) {
+	protected function page_create($title, $description = null) {
 		
 		$request_overrides = array(
 				'uri' => array(
 					'path' => "/ws/pages/new",
 				),
-				'body' => (string)$this->requestBody(array(
+				'body' => $this->requestBody(array(
 									'page' => array(
 										'title' => htmlentities($title),
 										//'description' => htmlentities($description),
@@ -572,7 +618,7 @@ public function describe(&$model) {
  * @return mixed Array containing the new page, false on failure.
  * @access protected
  */
-	protected function pages_show($page_id) {
+	protected function page_show($page_id) {
 		
 		$request_overrides = array(
 				'uri' => array(
@@ -585,7 +631,117 @@ public function describe(&$model) {
 			return false;
 		}		
 		
-		return array($this->model->alias => $result['Response']['Page']);
+		// Knock down a few sub-arrays.
+		return $this->reformat($result['Response']['Page']);
+	}
+		
+		
+/**
+ * Reorder items on a page. An incomplete list of IDs 
+ * will be sorted among themselves, and moved below any un-included IDs. 
+ * Specifying a single ID will essentially move it to the end of the page.
+ *
+ * @param int $page_id The ID number of the page to reorder.
+ * @param array $belonging_id_order_array An ordered array containing the IDs of the belongings on the given page.
+ * @return boolean True on success, false on failure.
+ * @access protected
+ */
+	protected function page_reorder_items($page_id, $belonging_id_order_array) {
+		
+		// Behavioral questions:
+		// What happens if not all the IDs are valid? Do the valid ones still get sorted?
+		// What if not all of the belongings are included? Example: Items (1, 2, 3, 4) on the page, but we only get (3, 1). Resulting order will be (2, 4, 3, 1).
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/reorder',
+				),
+				'body' => $this->requestBody(array(
+									'belongings' => implode( ' ', $belonging_id_order_array ),  //implode( ' ', array_map('intval', $belonging_id_order_array) ),
+								)),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		return true;
+	}
+	
+/**
+ * Update a page's title. 
+ *
+ * @param int $page_id The ID number of the page to retitle.
+ * @param string $title The new title to use.
+ * @return boolean True on success, false on failure.
+ * @access protected
+ */
+	protected function page_update_title($page_id, $title) {
+
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/update_title',
+				),
+				'body' => $this->requestBody(array(
+									'page' => array(
+										'title' => htmlentities($title),
+										//'description' => htmlentities($description),
+									),
+								)),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		return true;
+	}
+	
+/**
+ * Duplicate a page. 
+ *
+ * @param int $page_id The ID number of the page to retitle.
+ * @return mixed An array containing the new page's id and name on success, false on failure.
+ * @access protected
+ */
+	protected function page_duplicate($page_id) {
+
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/duplicate',
+				),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		return $this->reformat($result['Response']['Page']);
+	}
+	
+/**
+ * Email yourself a copy of a page. 
+ *
+ * @param int $page_id The ID number of the page to retitle.
+ * @return boolean True on success, false on failure.
+ * @access protected
+ */
+	protected function page_email($page_id) {
+
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/email',
+				),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		return true;
 	}
 	
 
@@ -603,22 +759,6 @@ public function describe(&$model) {
 
 
 
-
-
-/**
- * Create a new Backpack record based on the table name of $model
- *
- * To-be-overridden in subclasses.
- *
- * @param Model $model The Model to be created.
- * @param array $fields An Array of fields to be saved.
- * @param array $values An Array of values to save.
- * @return boolean success
- * @access public
- */
-	function create(&$model, $fields = null, $values = null) {
-		return false;
-	}
 
 /**
  * Read wrapper. Outsources actual lookups to API-call-specific helpers.
@@ -643,13 +783,49 @@ public function describe(&$model) {
 		//###DEBUG: Hardcoded for testing individual helpers!
 		
 		// Pages:
-		//$results = $this->pages_list_all();
-		//$results = $this->pages_search('Mac');
-		//$results = $this->pages_create('Test3', 'Description is no longer supported. Use Notes instead.');
-		$results = $this->pages_show('836576');
+		//$results = $this->page_list_all();
+		//$results = $this->page_search('Mac');
+		//$results = $this->page_create('Test3', 'Description is no longer supported. Use Notes instead.');
+
+//  		$results = $this->page_show('2322904');  // 2322904 = Datasource Test
+// 		foreach($results[$this->model->alias]['Belonging'] as $index => $belonging)
+// 		{
+// 			$type = $belonging['Widget']['type'];
+// 			$extract = "/{$type}[id={$belonging['Widget']['id']}]/.";
+// 			//debug($extract);
+// 			$widget = array_shift(Set::extract($extract, $results[$this->model->alias]));
+// 			$results[$this->model->alias]['Belonging'][$index][$type] = $widget;
+// 		}
+		
+		//$results = $this->page_reorder_items('2322904', array('11933472') ); // 11933140 = separator, 9259675 = todo list
+		//$results = $this->page_update_title('2322904', 'Datasource New Name' );
+		//$results = $this->page_duplicate('2322904'); 
+		$results = $this->page_email('2322904'); 
+		
 
 
 		return $results;
+	}
+
+
+
+
+
+
+
+/**
+ * Create a new Backpack record based on the table name of $model
+ *
+ * To-be-overridden in subclasses.
+ *
+ * @param Model $model The Model to be created.
+ * @param array $fields An Array of fields to be saved.
+ * @param array $values An Array of values to save.
+ * @return boolean success
+ * @access public
+ */
+	function create(&$model, $fields = null, $values = null) {
+		return false;
 	}
 
 /**
@@ -696,7 +872,7 @@ public function describe(&$model) {
 				), 
 			);
 		$additional_body_tags = array('request' => $additional_body_tags);
-		$body = array_replace_recursive($body, $additional_body_tags);  //###VER: 5.3+ only!
+		$body = Set::merge($body, $additional_body_tags);
 		$body = new Xml($body, $this->xml_options);
 		$body = $body->toString(array('cdata' => false, 'whitespace' => false));
 		return $body;
@@ -719,10 +895,10 @@ public function describe(&$model) {
 				'header' => array(
 					'Content-Type' => 'application/xml',
 				),
-				'body' => (string)$this->requestBody(),
+				'body' => $this->requestBody(),
 			);
 		
-		$request = array_replace_recursive($request_defaults, $request_overrides);  //###VER: 5.3+ only!
+		$request = Set::merge($request_defaults, $request_overrides);
 		
 		//###DEBUG:	debug($request); exit;
 		
