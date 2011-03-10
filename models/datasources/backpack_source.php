@@ -59,6 +59,43 @@ class BackpackSource extends DataSource {
 	public $description = '37signals Backpack API DataSource';
 
 /**
+ * Connection status
+ *
+ * @var boolean
+ * @access public
+ */
+	public $connected = false;
+
+/**
+ * HttpSocket instance
+ *
+ * @var HttpSocket
+ * @access public
+ */
+	public $Http = null;
+
+/**
+ * Last HTTP response code
+ *
+ * @var integer
+ * @access public
+ */
+	public $httpResponseCode = null;
+
+/**
+ * Default configuration
+ *
+ * @var array
+ * @access public
+ */
+	public $_baseConfig = array(
+		'host' => '',
+		'ssl' => true,
+		'token' => '',
+		'timeout' => 20,
+	);
+
+/**
  * Schema
  *
  * @var array
@@ -99,6 +136,11 @@ class BackpackSource extends DataSource {
 				'key' => 'primary',
 				'length' => 11,
 			),
+			'page_id' => array(
+				'type' => 'integer',
+				'null' => false,
+				'length' => 11,
+			),
 			'name' => array(
 				'type' => 'string',
 				'null' => false,
@@ -112,6 +154,11 @@ class BackpackSource extends DataSource {
 				'type' => 'integer',
 				'null' => false,
 				'key' => 'primary',
+				'length' => 11,
+			),
+			'list_id' => array(
+				'type' => 'integer',
+				'null' => false,
 				'length' => 11,
 			),
 			'completed' => array(
@@ -133,6 +180,11 @@ class BackpackSource extends DataSource {
 				'type' => 'integer',
 				'null' => false,
 				'key' => 'primary',
+				'length' => 11,
+			),
+			'page_id' => array(
+				'type' => 'integer',
+				'null' => false,
 				'length' => 11,
 			),
 			'title' => array(
@@ -161,6 +213,11 @@ class BackpackSource extends DataSource {
 				'key' => 'primary',
 				'length' => 11,
 			),
+			'page_id' => array(
+				'type' => 'integer',
+				'null' => false,
+				'length' => 11,
+			),
 			'name' => array(
 				'type' => 'string',
 				'null' => false,
@@ -171,6 +228,37 @@ class BackpackSource extends DataSource {
 				'type' => 'integer',
 				'null' => false,
 				'length' => 11,
+			),
+		),
+
+		// Emails ------------------------------
+		'emails' => array(
+			'id' => array(
+				'type' => 'integer',
+				'null' => false,
+				'key' => 'primary',
+				'length' => 11,
+			),
+			'page_id' => array(
+				'type' => 'integer',
+				'null' => false,
+				'length' => 11,
+			),
+			'title' => array(
+				'type' => 'string',
+				'null' => false,
+				'length' => 255,
+				'default' => '',
+			),
+			'created_at' => array(
+				'type' => 'datetime',
+				'null' => false,
+			),
+			'body' => array(
+				'type' => 'string',
+				'null' => false,
+				'length' => 4096,
+				'default' => '',
 			),
 		),
 
@@ -212,32 +300,6 @@ class BackpackSource extends DataSource {
 				'type' => 'integer',
 				'null' => false,
 				'length' => 11,
-			),
-		),
-
-		// Emails ------------------------------
-		'emails' => array(
-			'id' => array(
-				'type' => 'integer',
-				'null' => false,
-				'key' => 'primary',
-				'length' => 11,
-			),
-			'title' => array(
-				'type' => 'string',
-				'null' => false,
-				'length' => 255,
-				'default' => '',
-			),
-			'created_at' => array(
-				'type' => 'datetime',
-				'null' => false,
-			),
-			'body' => array(
-				'type' => 'string',
-				'null' => false,
-				'length' => 4096,
-				'default' => '',
 			),
 		),
 
@@ -350,52 +412,19 @@ class BackpackSource extends DataSource {
 	);
 
 /**
- * Connection status
- *
- * @var boolean
- * @access public
- */
-	public $connected = false;
-
-/**
- * Last HTTP response code
- *
- * @var integer
- * @access protected
- */
-	protected $httpResponseCode = null;
-
-/**
- * Default configuration
- *
- * @var array
- * @access public
- */
-	public $_baseConfig = array(
-		'host' => '',
-		'ssl' => true,
-		'token' => '',
-		'timeout' => 20,
-	);
-
-/**
  * Standard XML formatting options for all requests/responses.
  *
  * @var array
  * @access private
  */
-	private $xml_options = array(
-		'format' => 'tags', 
-		'slug' => false
+	private $__xml_options = array(
+		'format' => 'tags', // or 'attributes'
+		'slug' => false,
+		//'root' => '#document',
+		//'version' => '1.0',
+		//'encoding' => 'UTF-8',
+		//'tags' => array('list' => array('slug' => true, 'name' => 'BLAH', ), ),  // Tag-specific options.
 	);
-
-/**
- * HttpSocket instance
- *
- * @var HttpSocket
- * @access public
- */
-	public $Http = null;
 
 
 
@@ -472,293 +501,20 @@ public function describe(&$model) {
 
 
 
-
-
 /**
- * Convert the XML-style Page array into a Cake-style array so scaffolding, etc. work more automatically.
+ * Create a new Backpack record based on the table name of $model
  *
- * @param int $raw_xml_array An array converted from the raw XML the 37s API returns representing a single Page.
- * @return array Reformatted array that follows Cake model naming and nesting conventions.
- * @access protected
- */
-	protected function reformat($raw_xml_array) {
-		
-		$types = array(
-			'Belongings' =>'Belonging',
-			'Notes' =>'Note',
-			'Separators' =>'Separator',
-			'Emails' =>'Email',
-			'Lists' =>'List',
-			'Items' =>'Item',
-		);
-		
-		foreach($types as $plural => $singular) {
-		
-			if(isset($raw_xml_array[$plural][$singular]) || isset($raw_xml_array[$plural][strtolower($singular)])) {
-				
-				if(isset($raw_xml_array[$plural][$singular]['id'])) {  // Single item returned
-					$raw_xml_array[$singular] = array($raw_xml_array[$plural][$singular]);  // Make sure we can still loop over it.
-				}
-				elseif(isset($raw_xml_array[$plural][strtolower($singular)]['id'])) {  // Single item returned, but somehow not slugged correctly.
-					$raw_xml_array[ucfirst($singular)] = array($raw_xml_array[$plural][strtolower($singular)]);
-				}
-				else {
-					$raw_xml_array[$singular] = $raw_xml_array[$plural][$singular];
-				}
-				
-				unset($raw_xml_array[$plural]);  // Remove the old plural key.
-			}
-		}
-		
-		// Handle the nested List Items.
-		if(isset($raw_xml_array['List'])) {
-			foreach($raw_xml_array['List'] as $index => $list) {
-				$raw_xml_array['List'][$index] = array_shift($this->reformat($list));
-			}
-		}
-		
-		return array($this->model->alias => $raw_xml_array);
-	}
-
-/**
- * Fetch a list of page records.
+ * To-be-overridden in subclasses.
  *
- * @return mixed Array of Page records on success, false on HTTP request failure or 37s API failure.
- * @access protected
+ * @param Model $model The Model to be created.
+ * @param array $fields An Array of fields to be saved.
+ * @param array $values An Array of values to save.
+ * @return boolean success
+ * @access public
  */
-	protected function page_list_all() {
-		
-		$request_overrides = array(
-				'uri' => array(
-					'path' => "/ws/pages/all",
-				),
-			);
-	
-		// Fire the http request.
-		if(($result = $this->_request($request_overrides)) === false) {
-			return false;
-		}		
-		
-		// Build a Cake-style array.
-		$results = array();
-		foreach($result['Response']['Pages']['Page'] as $index => $r)
-		{
-			$results[] = $this->reformat($r);
-		}
-		
-		return $results;
+	function create(&$model, $fields = null, $values = null) {
+		return false;
 	}
-	
-/**
- * Search for pages containing a specific term.
- *
- * @param string $term Search string. HTML characters will be sanitized.
- * @return mixed Array of Page records on success, false on HTTP request failure or 37s API failure.
- * @access protected
- */
-	protected function page_search($term) {
-		
-		$request_overrides = array(
-				'uri' => array(
-					'path' => "/ws/pages/search",
-				),
-				'body' => $this->requestBody(array('term' => htmlentities($term))),
-			);
-	
-		// Fire the http request.
-		if(($result = $this->_request($request_overrides)) === false) {
-			return false;
-		}		
-		
-		// Build a Cake-style array.
-		$results = array();
-		foreach($result['Response']['Pages']['Page'] as $index => $r)
-		{
-			$results[] = array($this->model->alias => $r);
-		}
-		
-		return $results;
-	}
-	
-/**
- * Create a new page.
- *
- * @param string $title Title of the new page.
- * @param string $description Initial description of the page. (No longer supported?)
- * @return mixed Array containing the new page, including ID if the page was created, false on failure.
- * @access protected
- */
-	protected function page_create($title, $description = null) {
-		
-		$request_overrides = array(
-				'uri' => array(
-					'path' => "/ws/pages/new",
-				),
-				'body' => $this->requestBody(array(
-									'page' => array(
-										'title' => htmlentities($title),
-										//'description' => htmlentities($description),
-									),
-								)),
-			);
-	
-		// Fire the http request.
-		if(($result = $this->_request($request_overrides)) === false) {
-			return false;
-		}		
-		
-		return array($this->model->alias => $result['Response']['Page']);
-	}
-	
-
-/**
- * Fetch a single page with all associated data.
- *
- * @param int $page_id The ID number of the page to fetch.
- * @return mixed Array containing the new page, false on failure.
- * @access protected
- */
-	protected function page_show($page_id) {
-		
-		$request_overrides = array(
-				'uri' => array(
-					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id),
-				),
-			);
-	
-		// Fire the http request.
-		if(($result = $this->_request($request_overrides)) === false) {
-			return false;
-		}		
-		
-		// Knock down a few sub-arrays.
-		return $this->reformat($result['Response']['Page']);
-	}
-		
-		
-/**
- * Reorder items on a page. An incomplete list of IDs 
- * will be sorted among themselves, and moved below any un-included IDs. 
- * Specifying a single ID will essentially move it to the end of the page.
- *
- * @param int $page_id The ID number of the page to reorder.
- * @param array $belonging_id_order_array An ordered array containing the IDs of the belongings on the given page.
- * @return boolean True on success, false on failure.
- * @access protected
- */
-	protected function page_reorder_items($page_id, $belonging_id_order_array) {
-		
-		// Behavioral questions:
-		// What happens if not all the IDs are valid? Do the valid ones still get sorted?
-		// What if not all of the belongings are included? Example: Items (1, 2, 3, 4) on the page, but we only get (3, 1). Resulting order will be (2, 4, 3, 1).
-		$request_overrides = array(
-				'uri' => array(
-					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/reorder',
-				),
-				'body' => $this->requestBody(array(
-									'belongings' => implode( ' ', $belonging_id_order_array ),  //implode( ' ', array_map('intval', $belonging_id_order_array) ),
-								)),
-			);
-	
-		// Fire the http request.
-		if(($result = $this->_request($request_overrides)) === false) {
-			return false;
-		}		
-		
-		return true;
-	}
-	
-/**
- * Update a page's title. 
- *
- * @param int $page_id The ID number of the page to retitle.
- * @param string $title The new title to use.
- * @return boolean True on success, false on failure.
- * @access protected
- */
-	protected function page_update_title($page_id, $title) {
-
-		$request_overrides = array(
-				'uri' => array(
-					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/update_title',
-				),
-				'body' => $this->requestBody(array(
-									'page' => array(
-										'title' => htmlentities($title),
-										//'description' => htmlentities($description),
-									),
-								)),
-			);
-	
-		// Fire the http request.
-		if(($result = $this->_request($request_overrides)) === false) {
-			return false;
-		}		
-		
-		return true;
-	}
-	
-/**
- * Duplicate a page. 
- *
- * @param int $page_id The ID number of the page to retitle.
- * @return mixed An array containing the new page's id and name on success, false on failure.
- * @access protected
- */
-	protected function page_duplicate($page_id) {
-
-		$request_overrides = array(
-				'uri' => array(
-					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/duplicate',
-				),
-			);
-	
-		// Fire the http request.
-		if(($result = $this->_request($request_overrides)) === false) {
-			return false;
-		}		
-		
-		return $this->reformat($result['Response']['Page']);
-	}
-	
-/**
- * Email yourself a copy of a page. 
- *
- * @param int $page_id The ID number of the page to retitle.
- * @return boolean True on success, false on failure.
- * @access protected
- */
-	protected function page_email($page_id) {
-
-		$request_overrides = array(
-				'uri' => array(
-					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/email',
-				),
-			);
-	
-		// Fire the http request.
-		if(($result = $this->_request($request_overrides)) === false) {
-			return false;
-		}		
-		
-		return true;
-	}
-	
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /**
  * Read wrapper. Outsources actual lookups to API-call-specific helpers.
@@ -776,6 +532,12 @@ public function describe(&$model) {
 		}
 		
 		$this->model = $model;
+		
+		// All of our CRUD functions are going to have to somehow switch on the Backpack "table" we're dealing with.
+// 		switch($this->model->useTable) {
+// 			default:
+// 				break;
+// 		}
 
 
 		//###TODO: Parse the $queryData to figure out which helper to call!
@@ -783,11 +545,12 @@ public function describe(&$model) {
 		//###DEBUG: Hardcoded for testing individual helpers!
 		
 		// Pages:
-		//$results = $this->page_list_all();
-		//$results = $this->page_search('Mac');
-		//$results = $this->page_create('Test3', 'Description is no longer supported. Use Notes instead.');
+		//$results = $this->_page_list_all();
+		//$results = $this->_page_search('Mac');
+		//$results = $this->_page_create('Test3', 'Description is no longer supported. Use Notes instead.');
+		$page_id = '2328789'; //$results[$this->model->alias]['id'];
 
-//  		$results = $this->page_show('2322904');  // 2322904 = Datasource Test
+  		$results = $this->_page_read($page_id);  // 2328789 = Datasource Test
 // 		foreach($results[$this->model->alias]['Belonging'] as $index => $belonging)
 // 		{
 // 			$type = $belonging['Widget']['type'];
@@ -797,35 +560,22 @@ public function describe(&$model) {
 // 			$results[$this->model->alias]['Belonging'][$index][$type] = $widget;
 // 		}
 		
-		//$results = $this->page_reorder_items('2322904', array('11933472') ); // 11933140 = separator, 9259675 = todo list
-		//$results = $this->page_update_title('2322904', 'Datasource New Name' );
-		//$results = $this->page_duplicate('2322904'); 
-		$results = $this->page_email('2322904'); 
+		//$results = $this->_page_reorder_items($page_id, array('11933472') ); // 11933140 = separator, 9259675 = todo list
+		//$results = $this->_page_update_title($page_id, 'Datasource New Name' );
+		//$results = $this->_page_duplicate($page_id); 
+		//$results = $this->_page_email($page_id); 
+		//$results = $this->_page_delete('$page_id); 
+
+
+		//$results = $this->_list_create($page_id, 'Funny Things'); 
+		//$results = $this->_list_read($page_id); 
+		//$list_id = $results[$this->model->alias]['id'];
+		//$results = $this->_list_update_title($page_id, $list_id, 'Really Funny Things'); 
+		//$results = $this->_list_delete($page_id, $list_id); 
 		
 
 
 		return $results;
-	}
-
-
-
-
-
-
-
-/**
- * Create a new Backpack record based on the table name of $model
- *
- * To-be-overridden in subclasses.
- *
- * @param Model $model The Model to be created.
- * @param array $fields An Array of fields to be saved.
- * @param array $values An Array of values to save.
- * @return boolean success
- * @access public
- */
-	function create(&$model, $fields = null, $values = null) {
-		return false;
 	}
 
 /**
@@ -873,7 +623,7 @@ public function describe(&$model) {
 			);
 		$additional_body_tags = array('request' => $additional_body_tags);
 		$body = Set::merge($body, $additional_body_tags);
-		$body = new Xml($body, $this->xml_options);
+		$body = new Xml($body, $this->__xml_options);
 		$body = $body->toString(array('cdata' => false, 'whitespace' => false));
 		return $body;
 	}
@@ -916,8 +666,8 @@ public function describe(&$model) {
 			return false;
 		}
 		// Convert the response to an array
-		$response = new Xml($response, $this->xml_options);
-		$response = $response->toArray($this->xml_options);
+		$response = new Xml($response, $this->__xml_options);
+		$response = $response->toArray($this->__xml_options);
 		
 		// 37s server returned an error in the message body.
 		if(!isset($response['Response']['success']) || strpos($response['Response']['success'], 'false') !== false) {
@@ -926,4 +676,579 @@ public function describe(&$model) {
 		return $response;
 	}
 
+/**
+ * Convert an XML-style Page array into a Cake-style array so scaffolding, etc. work more automatically.
+ *
+ * @param int $raw_xml_array An array converted from the raw XML the 37s API returns representing a single Page.
+ * @return array Reformatted array that follows Cake model naming and nesting conventions.
+ * @access protected
+ */
+	protected function _reformat($raw_xml_array) {
+		
+		$types = array(
+			'Belongings' 	=> 'Belonging',
+			'Notes' 		=> 'Note',
+			'Separators' 	=> 'Separator',
+			'Emails' 		=> 'Email',
+			'Lists' 		=> 'List',
+			'Items' 		=> 'Item',
+		);
+		
+		foreach($types as $plural => $singular) {
+		
+			if(isset($raw_xml_array[$plural][$singular]) || isset($raw_xml_array[$plural][strtolower($singular)])) {
+				
+				if(isset($raw_xml_array[$plural][$singular]['id'])) {  // Single item returned
+					$raw_xml_array[$singular] = array($raw_xml_array[$plural][$singular]);  // Make sure we can still loop over it.
+				}
+				elseif(isset($raw_xml_array[$plural][strtolower($singular)]['id'])) {  // Single item returned, but somehow not slugged correctly.
+					$raw_xml_array[ucfirst($singular)] = array($raw_xml_array[$plural][strtolower($singular)]);
+				}
+				else {
+					$raw_xml_array[$singular] = $raw_xml_array[$plural][$singular];
+				}
+				
+				unset($raw_xml_array[$plural]);  // Remove the old plural key.
+			}
+			elseif(isset($raw_xml_array[strtolower($plural)]) && empty($raw_xml_array[strtolower($plural)])) {  // No items returned, and somehow not slugged correctly.
+				$raw_xml_array[ucfirst($singular)] = $raw_xml_array[strtolower($plural)];
+				unset($raw_xml_array[strtolower($plural)]);  // Remove the old plural key.
+			}
+		}
+		
+		// Handle the nested List Items.
+		if(isset($raw_xml_array['List'])) {
+
+			if(isset($raw_xml_array['List']['id'])) {  // Single item returned
+				$raw_xml_array['List'] = array($raw_xml_array['List']);  // Make sure we can still loop over it.
+			}
+
+			foreach($raw_xml_array['List'] as $index => $list) {
+				$raw_xml_array['List'][$index] = array_shift($this->_reformat($list));
+			}
+		}
+		
+		return array($this->model->alias => $raw_xml_array);
+	}
+
+
+// Pages ====================================================================
+
+/**
+ * Create a new page.
+ *
+ * @param string $title Title of the new page.
+ * @param string $description Initial description of the page. (No longer supported?)
+ * @return mixed Array containing the new page, including ID if the page was created, false on failure.
+ * @access protected
+ */
+	protected function _page_create($title, $description = null) {
+		
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/pages/new",
+				),
+				'body' => $this->requestBody(array(
+									'page' => array(
+										'title' => htmlentities($title),
+										//'description' => htmlentities($description),
+									),
+								)),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		return array($this->model->alias => $result['Response']['Page']);
+	}
+	
+/**
+ * Duplicate a page. 
+ *
+ * @param int $page_id The ID number of the page to retitle.
+ * @return mixed An array containing the new page's id and name on success, false on failure.
+ * @access protected
+ */
+	protected function _page_duplicate($page_id) {
+
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/duplicate',
+				),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		return $this->_reformat($result['Response']['Page']);
+	}
+
+/**
+ * Fetch a single page with all associated data.
+ *
+ * @param int $page_id The ID number of the page to fetch.
+ * @return mixed Array containing the new page, false on failure.
+ * @access protected
+ */
+	protected function _page_read($page_id) {
+		
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id),
+				),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		// Knock down a few sub-arrays.
+		return $this->_reformat($result['Response']['Page']);
+	}
+		
+		
+/**
+ * Fetch a list of page records.
+ *
+ * @return mixed Array of Page records on success, false on HTTP request failure or 37s API failure.
+ * @access protected
+ */
+	protected function _page_list_all() {
+		
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/pages/all",
+				),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		// Build a Cake-style array.
+		$results = array();
+		foreach($result['Response']['Pages']['Page'] as $index => $r)
+		{
+			$results[] = $this->_reformat($r);
+		}
+		
+		return $results;
+	}
+	
+/**
+ * Search for pages containing a specific term.
+ *
+ * @param string $term Search string. HTML characters will be sanitized.
+ * @return mixed Array of Page records on success, false on HTTP request failure or 37s API failure.
+ * @access protected
+ */
+	protected function _page_search($term) {
+		
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/pages/search",
+				),
+				'body' => $this->requestBody(array('term' => htmlentities($term))),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		// Build a Cake-style array.
+		$results = array();
+		foreach($result['Response']['Pages']['Page'] as $index => $r)
+		{
+			$results[] = array($this->model->alias => $r);
+		}
+		
+		return $results;
+	}
+	
+/**
+ * Reorder items on a page. An incomplete list of IDs 
+ * will be sorted among themselves, and moved below any un-included IDs. 
+ * Specifying a single ID will essentially move it to the end of the page.
+ *
+ * @param int $page_id The ID number of the page to reorder.
+ * @param array $belonging_id_order_array An ordered array containing the IDs of the belongings on the given page.
+ * @return boolean True on success, false on failure.
+ * @access protected
+ */
+	protected function _page_reorder_items($page_id, $belonging_id_order_array) {
+		
+		// Behavioral questions:
+		// What happens if not all the IDs are valid? Do the valid ones still get sorted?
+		// What if not all of the belongings are included? Example: Items (1, 2, 3, 4) on the page, but we only get (3, 1). Resulting order will be (2, 4, 3, 1).
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/reorder',
+				),
+				'body' => $this->requestBody(array(
+									'belongings' => implode( ' ', $belonging_id_order_array ),  //implode( ' ', array_map('intval', $belonging_id_order_array) ),
+								)),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		return true;
+	}
+	
+/**
+ * Update a page's title. 
+ *
+ * @param int $page_id The ID number of the page to retitle.
+ * @param string $title The new title to use.
+ * @return boolean True on success, false on failure.
+ * @access protected
+ */
+	protected function _page_update_title($page_id, $title) {
+
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/update_title',
+				),
+				'body' => $this->requestBody(array(
+									'page' => array(
+										'title' => htmlentities($title),
+										//'description' => htmlentities($description),
+									),
+								)),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		return true;
+	}
+	
+/**
+ * Delete a page. 
+ *
+ * @param int $page_id The ID number of the page to delete.
+ * @return boolean True if Backpack says it was able to successfully delete the page, false on failure.
+ * @access protected
+ */
+	protected function _page_delete($page_id) {
+
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/destroy',
+				),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		return true;
+	}
+	
+/**
+ * Email yourself a copy of a page. 
+ *
+ * @param int $page_id The ID number of the page to retitle.
+ * @return boolean True if Backpack says it was able to successfully generate the email, false on failure.
+ * @access protected
+ */
+	protected function _page_email($page_id) {
+
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/email',
+				),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		return true;
+	}
+
+/**
+ * Change the sharing permissions for a page in your account. A page can be shared privately with specified email addresses, and/or made public for anyone to access.
+ *
+ * @param int $page_id The ID number of the page to retitle.
+ * @param array $email_addresses Optional array of email addresses the page should be shared with.
+ * @param boolean $public Whether the page should only be shared with $email_addresses, or accessible by anyone knowing the URL.
+ * @return boolean True if Backpack says it was able to successfully set the sharing options, false on failure.
+ * @access protected
+ */
+	protected function _page_sharing($page_id, $email_addresses = array(), $public = null) {
+
+		App::import('Core' , 'Validation');
+		$Validation = new Validation();
+		
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/share',
+				),
+			);
+	
+		// Validate the provided email addresses.
+		$valid_emails = array();
+		if(is_array($email_addresses)) {
+			foreach($email_addresses as $e) {
+				if($Validation->email($e, true)) {
+					$valid_emails[] = $e;
+				}
+			}
+		}
+		
+		// Build the XML request body based on passed args.
+		if(count($valid_emails)) {
+			$request_overrides['body']['email_addresses'] = implode(' ', $valid_emails);
+		}
+		
+		if(!is_bool($public)) {
+			$request_overrides['body']['page']['public'] = ($public ? '1' : '0');
+		}
+		
+		
+		//###TODO
+		// Fire the http request.
+// 		if(($result = $this->_request($request_overrides)) === false) {
+// 			return false;
+// 		}		
+		
+		return false;
+	}
+
+/**
+ * Remove a linked page shared from someone else's account 
+ *
+ * @param int $page_id The ID number of the page to retitle.
+ * @return boolean True if Backpack says it was able to successfully unlink the page from your account, false on failure.
+ * @access protected
+ */
+	protected function _page_unshare_friend_page($page_id) {
+
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/unshare_friend_page',
+				),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		return false;
+	}
+
+
+	
+// Lists ====================================================================
+
+//###TODO
+
+/**
+ * Create a new list.
+ *
+ * @param int $page_id The ID number of the page.
+ * @param string $title Title of the new list.
+ * @return mixed Array containing the new page, including ID if the page was created, false on failure.
+ * @access protected
+ */
+	protected function _list_create($page_id, $title) {
+		
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/lists/add',
+				),
+				'body' => $this->requestBody(array(
+									'name' => htmlentities($title),
+								)),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		return array($this->model->alias => $result['Response']['List']);
+	}
+	
+/**
+ * Fetch a list of all lists associated with a page.
+ *
+ * @param int $page_id The ID number of the page.
+ * @return mixed Array containing a list of Lists (id and name) on the page.
+ * @access protected
+ */
+	protected function _list_read($page_id) {
+		
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/lists/list',
+				),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		// Knock down a few sub-arrays.
+		return $this->_reformat($result['Response']['Lists']);
+	}
+		
+/**
+ * Update a list's title (which is the only editable attribute.)
+ *
+ * @param int $page_id The ID number of the page the list is on.
+ * @param int $list_id The ID number of the list to retitle.
+ * @param string $title The new title to use for the list.
+ * @return boolean True on success, false on failure.
+ * @access protected
+ */
+	protected function _list_update_title($page_id, $list_id, $title) {
+
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/lists/update/'.preg_replace('/[^0-9]/', '', $list_id),
+				),
+				'body' => $this->requestBody(array(
+									'list' => array(
+										'name' => htmlentities($title),
+										//'description' => htmlentities($description),
+									),
+								)),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		return true;
+	}
+	
+/**
+ * Delete a list from a page. 
+ *
+ * @param int $page_id The ID number of the page to delete.
+ * @param int $list_id The ID number of the list to retitle.
+ * @return boolean True if Backpack says it was able to successfully delete the page, false on failure.
+ * @access protected
+ */
+	protected function _list_delete($page_id, $list_id) {
+
+		$request_overrides = array(
+				'uri' => array(
+					'path' => "/ws/page/".preg_replace('/[^0-9]/', '', $page_id).'/lists/destroy/'.preg_replace('/[^0-9]/', '', $list_id),
+				),
+			);
+	
+		// Fire the http request.
+		if(($result = $this->_request($request_overrides)) === false) {
+			return false;
+		}		
+		
+		return true;
+	}
+	
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/**
+Validate an email address.
+Provide email address (raw input)
+Returns true if the email address has the email 
+address format and the domain exists.
+Ref: http://www.linuxjournal.com/article/9585?page=0,3
+*/
+function validEmail($email)
+{
+   $isValid = true;
+   $atIndex = strrpos($email, "@");
+   if (is_bool($atIndex) && !$atIndex)
+   {
+      $isValid = false;
+   }
+   else
+   {
+      $domain = substr($email, $atIndex+1);
+      $local = substr($email, 0, $atIndex);
+      $localLen = strlen($local);
+      $domainLen = strlen($domain);
+      if ($localLen < 1 || $localLen > 64)
+      {
+         // local part length exceeded
+         $isValid = false;
+      }
+      else if ($domainLen < 1 || $domainLen > 255)
+      {
+         // domain part length exceeded
+         $isValid = false;
+      }
+      else if ($local[0] == '.' || $local[$localLen-1] == '.')
+      {
+         // local part starts or ends with '.'
+         $isValid = false;
+      }
+      else if (preg_match('/\\.\\./', $local))
+      {
+         // local part has two consecutive dots
+         $isValid = false;
+      }
+      else if (!preg_match('/^[A-Za-z0-9\\-\\.]+$/', $domain))
+      {
+         // character not valid in domain part
+         $isValid = false;
+      }
+      else if (preg_match('/\\.\\./', $domain))
+      {
+         // domain part has two consecutive dots
+         $isValid = false;
+      }
+      else if
+(!preg_match('/^(\\\\.|[A-Za-z0-9!#%&`_=\\/$\'*+?^{}|~.-])+$/',
+                 str_replace("\\\\","",$local)))
+      {
+         // character not valid in local part unless 
+         // local part is quoted
+         if (!preg_match('/^"(\\\\"|[^"])+"$/',
+             str_replace("\\\\","",$local)))
+         {
+            $isValid = false;
+         }
+      }
+      if ($isValid && !(checkdnsrr($domain,"MX") || checkdnsrr($domain,"A")))
+      {
+         // domain not found in DNS
+         $isValid = false;
+      }
+   }
+   return $isValid;
+}
 }
